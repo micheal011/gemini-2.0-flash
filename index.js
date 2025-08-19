@@ -1,7 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import multer from 'multer';
-import fs from 'fs/promises';
+import * as fs from "node:fs";
 import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 
@@ -10,18 +10,30 @@ const app = express();
 app.use(express.json());
 
 const genAI = new GoogleGenAI({apiKey: process.env.GEMINI_API_KEY});
+const GEMINI_MODEL = 'models/gemini-2.0-flash';
 
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   });
 
+function extractText(resp) {
+    try {
+        const text = resp?.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? resp?.candidates?.[0]?.content?.parts?.[0]?.text ?? resp?.response?.candidates?.[0]?.content?.text;
+
+        return text ?? JSON.stringify(resp, null, 2);
+    } catch (error) {
+        console.error("Error extracting text:", error);
+        return JSON.stringify(resp, null, 2);
+    }
+}
+
 // Untuk Generate Text
 app.post('/generate-text', async (req, res) => {
     try {
         const prompt = req.body?.prompt || 'Hello from Gemini 2.0!';
         const result = await genAI.models.generateContent({
-            model: 'models/gemini-2.0-flash',
+            model: GEMINI_MODEL,
             contents: [{ role: 'user', parts: [{ text: prompt }] }]
         });
 
@@ -33,30 +45,34 @@ app.post('/generate-text', async (req, res) => {
 });
 
 // Untuk vision-to-text (kirim gambar direspon dengan text)
-// masih ada error, sedang diperbaiki
 app.post('/generate-from-image', upload.single('image'), async (req, res) => {
-    // const image = imageToGenerativePart(req.file.path);
-    console.log('content-type:', req.headers['content-type']);
-    console.log('req.file:', req.file);
-    console.log('req.body:', req.body);
-    console.log('size:', req.file?.size, 'mime:', req.file?.mimetype);
-
     try {
         if (!req.file) {
             return res.status(400).json({error: 'File image wajib di-upload'});
         }
 
         const prompt = (req.body?.prompt || 'Describe the image').toString();
-        // const data = await fs.readFile(req.file.path, {encoding: 'base64'});
         const base64 = req.file.buffer.toString('base64');
         const mime = req.file.mimetype || 'image/jpeg';
         
         const result = await genAI.models.generateContent({
-            model: 'models/gemini-2.0-flash',
-            contents: [{ role: 'user', parts: [
-                {text: prompt},
-                {inline_data: {mime_type: mime, data: base64}}
-            ]}]
+            model: GEMINI_MODEL,
+            contents: [
+                {
+                    role: 'user',
+                    parts: [
+                        {
+                            text: prompt
+                        },
+                        {
+                            inlineData: {
+                                mimeType: mime,
+                                data: base64
+                            }
+                        }
+            ]
+        }
+        ]
         });
 
         const text = result?.candidates?.[0]?.content?.parts?.map(p => p.text)?.join('') || '';
@@ -70,6 +86,45 @@ app.post('/generate-from-image', upload.single('image'), async (req, res) => {
                fs.unlinkSync(req.file.path);
             } catch (error) {}
         }
+    }
+});
+
+// Untuk generate dari dokumen
+app.post('/generate-from-document', upload.single('document'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'File dokumen wajib di-upload (PDF/DOCX/TXT).' });
+        }
+        
+        // const { prompt } = req.body;
+        const prompt = (req.body?.prompt || 'Ringkas dokumen berikut:').toString();
+        const docBase64 = req.file.buffer.toString('base64');
+        const mime = req.file.mimetype || 'application/pdf';
+        const result = await genAI.models.generateContent({
+            model: GEMINI_MODEL,
+            contents: [
+                {
+                    role: 'user',
+                    parts: [
+                        {
+                            text: prompt,
+                        },
+                        {
+                            inlineData: {
+                                mimeType: mime,
+                                data: docBase64
+                            }
+                        }
+                    ],
+                }
+            ]
+        });
+
+        // const text = result?.candidates?.[0]?.content?.parts?.map(p => p.text)?.join('') || '';
+        // res.json({output: text});
+        res.json({ result: extractText(result)});
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 
