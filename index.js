@@ -128,6 +128,40 @@ app.post('/generate-from-document', upload.single('document'), async (req, res) 
     }
 });
 
+// Untuk generate dari audio
+app.post('/generate-from-audio', upload.single('audio'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'File audio wajib di-upload.' });
+        }
+        const prompt = (req.body?.prompt || "Transkrip audio berikut:").toString();
+        const audioBase64 = req.file.buffer.toString('base64');
+        const mime = req.file.mimetype || 'audio/wav';
+        const result = await genAI.models.generateContent({
+            model: GEMINI_MODEL,
+            contents: [
+                {
+                    role: 'user',
+                    parts: [
+                        {
+                            text: prompt,
+                        },
+                        {
+                            inlineData: {
+                                mimeType: mime,
+                                data: audioBase64
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+        res.json({ result: extractText(result) });
+    } catch (error) {
+        res.status(500).json({error: error.message});
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
     // console.log(`Gemini API server is running at http://localhost:${PORT}`);
